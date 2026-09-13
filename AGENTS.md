@@ -25,3 +25,14 @@ Examples:
 
 Messages such as `fix: handle timeouts` or `docs: update README` are invalid
 because they omit the scope.
+
+## Pull requests
+
+- Use the same scoped Conventional Commit format for PR titles. Allowed types:
+  `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+- Use `.github/pull_request_template.md` for human-authored PRs. Describe the
+  problem, final behavior and actual validation; never claim unperformed checks.
+- Merge PRs using squash with the PR title as the commit title. Check the title
+  again at merge time and wait for the required CI checks.
+- Keep Dependabot's generated descriptions. Review major updates separately;
+  check runtime dependency changes in LM Studio as well as automated tests.

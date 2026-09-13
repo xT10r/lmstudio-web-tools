@@ -12,6 +12,13 @@ updates:
       time: '10:00'
       timezone: Europe/Moscow
     open-pull-requests-limit: 5
+    groups:
+      runtime-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-minor-patch:
+        dependency-type: development
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
@@ -24,3 +31,7 @@ updates:
       time: '10:00'
       timezone: Europe/Moscow
     open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
