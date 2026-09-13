@@ -100,6 +100,8 @@ These are project-level checks, not official LM Studio certification. CI does no
 
 [Dependabot](.github/dependabot.yml) checks npm dependencies and GitHub Actions every Monday at 10:00 Europe/Moscow and opens pull requests for available updates. The [CI workflow](.github/workflows/ci.yml) checks each update on Linux and Windows. Updates require review and merging; they are not merged automatically. Test SDK and other runtime dependency updates in LM Studio before merging.
 
+Minor and patch updates are grouped separately for runtime dependencies, development dependencies, and GitHub Actions. Major updates remain separate PRs. CI rejects dependencies whose declared Node.js requirements do not support the tested runtime. PR titles must use `type(scope): description`; squash merges use that title as the commit message.
+
 ## Credits
 
 Based on `nub235/web-search` by nub235, distributed under the MIT License.
@@ -108,4 +110,4 @@ Originally based on [danielsig](https://lmstudio.ai/danielsig)'s DuckDuckGo sear
 
 ## License
 
-[MIT](LICENSE). Original copyright: nub235 (2025).
+Licensed under the [MIT License](LICENSE).
