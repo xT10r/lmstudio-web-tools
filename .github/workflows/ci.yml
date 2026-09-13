@@ -29,5 +29,5 @@ jobs:
         with:
           node-version: '22.21.1'
           cache: npm
-      - run: npm ci
+      - run: npm ci --engine-strict
       - run: npm run check
