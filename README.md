@@ -102,6 +102,10 @@ These are project-level checks, not official LM Studio certification. CI does no
 
 Minor and patch updates are grouped separately for runtime dependencies, development dependencies, and GitHub Actions. Major updates remain separate PRs. CI rejects dependencies whose declared Node.js requirements do not support the tested runtime. PR titles must use `type(scope): description`; squash merges use that title as the commit message.
 
+Compatibility exceptions in Dependabot keep `@types/node` on 22.x, Zod on 3.x, jsdom on 29.x, and `@types/jsdom` on 28.x. CI reads the supported runtime from [.node-version](.node-version) and checks that the declared and locked Node.js types match its major version. Revisit these limits when LM Studio or its SDK changes: confirm runtime support before upgrading jsdom, and migrate the SDK and schemas together before adopting Zod 4.
+
+Merge dependency PRs one at a time. Update the next PR against the new `main` and wait for fresh CI results. For runtime dependencies, also exercise Web Search and Visit Website in LM Studio. Grouping and passing automated checks alone do not establish full runtime compatibility; automatic merging remains disabled.
+
 ## Credits
 
 Based on `nub235/web-search` by nub235, distributed under the MIT License.
