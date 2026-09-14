@@ -6,6 +6,18 @@ const readJson = async path => JSON.parse(await readFile(path, 'utf8'));
 const manifest = await readJson('manifest.json');
 const pkg = await readJson('package.json');
 const lock = await readJson('package-lock.json');
+const runtime = (await readFile('.node-version', 'utf8')).trim();
+assert.match(runtime, /^\d+\.\d+\.\d+$/, '.node-version must pin a full Node.js version');
+const runtimeMajor = runtime.split('.')[0];
+const nodeTypesRange = pkg.devDependencies['@types/node'];
+// Accept exact, tilde or caret versions that stay within one non-zero major.
+assert.match(nodeTypesRange, /^[~^]?[1-9]\d*\.\d+\.\d+$/, '@types/node must use an exact, tilde or caret version');
+assert.equal(nodeTypesRange.replace(/^[~^]/, '').split('.')[0], runtimeMajor,
+  '@types/node must target the major version in .node-version');
+assert.equal(lock.packages[''].devDependencies['@types/node'], nodeTypesRange,
+  'Lockfile root @types/node requirement must match package.json');
+assert.equal(lock.packages['node_modules/@types/node'].version.split('.')[0], runtimeMajor,
+  'Locked @types/node must match the supported Node.js major');
 
 assert.equal(manifest.type, 'plugin', 'Expected an LM Studio plugin');
 assert.equal(manifest.runner, 'node', 'This project uses the Node runner');
