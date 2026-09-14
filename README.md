@@ -53,6 +53,13 @@ Example prompt:
 | **Search Results Per Page** | 5 | Maximum results per search (1–10). `0` uses a fixed default of 5. |
 | **Max Content** | 8000 | Maximum characters in returned content, including transcripts and PDFs. `-1` uses a fixed default of 8000. Low limits can cause page-reading failures; see Notes. |
 | **Prompt Guidance** | On | Adds optional reminders based on search and visit counts. Try it with your model; improved answer quality is not guaranteed. |
+| **Debug Logging** | Off | Write operations, queries, URLs, statuses and errors to local JSONL files. |
+| **Debug Log Directory** | Empty | Absolute directory path. Empty uses `lmstudio-web-tools` under the plugin process's system temporary directory. |
+| **Debug: Include Results** | Off | Also record returned search results and page content, after redaction. Requires Debug Logging. |
+
+Debug logs use daily files named `debug-YYYY-MM-DD.jsonl` (UTC). Each event contains a timestamp, a per-call ID, the operation, elapsed milliseconds and event data. Status and diagnostic events show provider changes and reading failures even when a later fallback succeeds. A `return` event means the tool returned, including handled failure messages; it does not certify successful retrieval. IDs identify tool calls, not LM Studio chats.
+
+With result logging off, successful results are summarized by serialized character count; failure messages are retained. Logs remove URL credentials, query strings and fragments, configured Brave tokens and common credential fields. Queries and optional page content can still contain private information; inspect logs before sharing. Files accumulate without automatic retention cleanup. Disable debug after troubleshooting and remove unneeded files. A write failure emits one warning per call and does not stop retrieval. No files are created while debug is off.
 
 ## Tools
 

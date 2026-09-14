@@ -5,6 +5,7 @@ import { fetchTranscript } from "youtube-transcript-plus";
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
+import { withDiagnostics } from "./diagnostics";
 import { configSchematics } from "./config";
 import { searchApiProviders, SearchResult } from "./searchProviders";
 import { describeRequestError, websiteFailureResult } from "./requestErrors";
@@ -48,6 +49,15 @@ async function fetchPage(url: string, signal: AbortSignal): Promise<string> {
 
 export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[]> {
 	const tools: Tool[] = [];
+	const diagnosticOptions = () => {
+		const config = ctl.getPluginConfig(configSchematics);
+		return {
+			enabled: config.get("debugEnabled") ?? false,
+			directory: config.get("debugDirectory") ?? '',
+			includeResults: config.get("debugIncludeResults") ?? false,
+			secrets: [config.get("braveApiKey")?.trim() ?? ''],
+		};
+	};
 
 	const makeRateLimiter = (interval: number) => {
 		let lastRequestTimestamp = 0;
@@ -142,7 +152,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 		parameters: {
 			query: z.string().describe("The search query - be specific and varied across searches to get diverse results"),
 		},
-		implementation: async ({ query }, { status, warn, signal }) => {
+		implementation: withDiagnostics("search", diagnosticOptions, async ({ query }: { query: string }, { status, warn, signal, diagnostic }) => {
 			try {
 				const config = ctl.getPluginConfig(configSchematics);
 				const pageSize = undefinedIfAuto(config.get("pageSize"), 0) ?? 5;
@@ -182,10 +192,12 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						results = await searchDuckDuckGo(query, pageSize, signal);
 						if (results.length > 0) break;
 						lastError = 'DuckDuckGo returned empty results';
+						diagnostic(lastError);
 					} catch (err: unknown) {
 						signal.throwIfAborted();
 						const msg = err instanceof Error ? err.message : 'unknown';
 						lastError = `DuckDuckGo error: ${msg}`;
+						diagnostic(describeRequestError(err));
 						break;
 					}
 				}
@@ -218,7 +230,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 				warn(`Search failed: ${msg}`);
 				return `Error: ${msg}`;
 			}
-		},
+		}),
 	});
 
 	const visitWebsiteTool = tool({
@@ -227,9 +239,10 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 		parameters: {
 			url: z.string().url().describe("The URL of the website to visit"),
 		},
-		implementation: async ({ url }, { status, warn, signal }) => {
+		implementation: withDiagnostics("visit", diagnosticOptions, async ({ url }: { url: string }, { status, warn, signal, diagnostic }) => {
 			const originalUrl = url;
 			const failures: string[] = [];
+			const recordFailure = (message: string) => { failures.push(message); diagnostic(message); };
 
 			// De-AMP - AMP pages are always worse than the original
 			url = url.replace(/\/amp\/?$/, '');
@@ -291,6 +304,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 
 				// PDFs always use Jina
 				if (isPdf) {
+					status('Fetching PDF via Jina...');
 					await waitIfNeededJina();
 					signal.throwIfAborted();
 					const jinaUrl = `https://r.jina.ai/${url}`;
@@ -338,13 +352,13 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						const content = smartTruncate(cleanMarkdown(raw), contentLimit);
 						const jinaWarning = raw.includes('This page maybe not yet fully loaded') || raw.includes('Unavailable For Legal Reasons');
 						if (jinaWarning || content.length < 2000) {
-							failures.push('Jina: blocked, incomplete, or insufficient readable content');
+							recordFailure('Jina: blocked, incomplete, or insufficient readable content');
 							return null;
 						}
 						return { title, content };
 					} catch (error) {
 						signal.throwIfAborted();
-						failures.push(`Jina: ${describeRequestError(error)}`);
+						recordFailure(`Jina: ${describeRequestError(error)}`);
 						return null;
 					}
 				};
@@ -357,13 +371,13 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						const { title, content: extracted } = extractContent(html, url);
 						const content = smartTruncate(extracted, contentLimit);
 						if (content.length < 2000) {
-							failures.push('Direct: insufficient readable content');
+							recordFailure('Direct: insufficient readable content');
 							return null;
 						}
 						return { title, content };
 					} catch (error) {
 						signal.throwIfAborted();
-						failures.push(`Direct: ${describeRequestError(error)}`);
+						recordFailure(`Direct: ${describeRequestError(error)}`);
 						return null;
 					}
 				};
@@ -400,7 +414,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						}
 					} catch (error) {
 						signal.throwIfAborted();
-						failures.push(`Jina (original URL): ${describeRequestError(error)}`);
+						recordFailure(`Jina (original URL): ${describeRequestError(error)}`);
 					}
 				}
 
@@ -435,7 +449,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 				warn(`Failed to load website: ${msg}`);
 				return websiteFailureResult(msg);
 			}
-		},
+		}),
 	});
 
 	tools.push(webSearchTool);

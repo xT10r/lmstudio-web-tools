@@ -22,7 +22,8 @@ assert.equal(lock.packages['node_modules/@types/node'].version.split('.')[0], ru
 assert.equal(manifest.type, 'plugin', 'Expected an LM Studio plugin');
 assert.equal(manifest.runner, 'node', 'This project uses the Node runner');
 assert.match(manifest.name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Plugin name must be kebab-case');
-assert.ok(typeof manifest.owner === 'string' && manifest.owner.trim(), 'Plugin owner is required');
+assert.ok(typeof manifest.owner === 'string', 'Plugin owner is required');
+assert.match(manifest.owner, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Plugin owner must be lowercase kebab-case');
 assert.ok(Number.isInteger(manifest.revision) && manifest.revision >= 0, 'Revision must be a non-negative integer');
 assert.equal(pkg.name, manifest.name, 'Package and plugin names must match');
 assert.equal(lock.name, pkg.name, 'Lockfile name must match');

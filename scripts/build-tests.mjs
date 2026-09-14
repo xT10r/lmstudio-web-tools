@@ -16,3 +16,5 @@ await build({
   alias: { 'got-scraping': './tests/mock-got.cjs' },
   outfile: '.lmstudio/website-check.cjs',
 });
+
+await build({ ...common, entryPoints: ['src/diagnostics.ts'], outfile: '.lmstudio/diagnostics.cjs' });
