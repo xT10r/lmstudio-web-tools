@@ -18,3 +18,5 @@ await build({
 });
 
 await build({ ...common, entryPoints: ['src/diagnostics.ts'], outfile: '.lmstudio/diagnostics.cjs' });
+
+await build({ ...common, entryPoints: ['src/requestTimeout.ts'], outfile: '.lmstudio/requestTimeout.cjs' });

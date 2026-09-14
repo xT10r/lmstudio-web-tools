@@ -42,6 +42,7 @@ export function describeRequestError(error: unknown): string {
 			UNABLE_TO_GET_ISSUER_CERT_LOCALLY: 'TLS certificate issuer is not trusted',
 		};
 		if (typeof item.code === 'string' && descriptions[item.code]) details.add(`${descriptions[item.code]} (${item.code})`);
+		if (item.message === 'No readable content' || item.message === 'Blocked or incomplete page content') details.add(item.message);
 		if (item.name === 'TimeoutError') details.add('Request timed out');
 		const http = typeof item.message === 'string' ? /^HTTP ([1-5][0-9]{2})$/.exec(item.message) : null;
 		const status = item.response?.statusCode;

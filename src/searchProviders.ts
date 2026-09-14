@@ -1,3 +1,5 @@
+import { withRequestTimeout } from "./requestTimeout";
+import { describeRequestError } from "./requestErrors";
 import { z } from "zod";
 
 export type SearchResult = { title: string; url: string; snippet: string };
@@ -38,14 +40,16 @@ function normalizeResults(items: unknown[], limit: number): SearchResult[] {
 }
 
 async function getJson(url: URL, signal: AbortSignal, headers: Record<string, string> = {}): Promise<unknown> {
-	const response = await fetch(url, {
-		headers: { Accept: 'application/json', ...headers },
-		signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
-		// Do not forward API credentials to redirected endpoints.
-		redirect: 'error',
+	return withRequestTimeout(signal, 10000, async requestSignal => {
+		const response = await fetch(url, {
+			headers: { Accept: 'application/json', ...headers },
+			signal: requestSignal,
+			// Do not forward API credentials to redirected endpoints.
+			redirect: 'error',
+		});
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		return response.json();
 	});
-	if (!response.ok) throw new Error(`HTTP ${response.status}`);
-	return response.json();
 }
 
 /** Enabled API providers are tried in order; an empty result allows the DDG fallback. */
@@ -96,7 +100,7 @@ export async function searchApiProviders(
 			// Never expose response bodies, request headers, keys, or instance URLs.
 			const message = error instanceof Error &&
 				(/^(HTTP \d{3}|Set a valid HTTP\(S\) SearXNG URL without embedded credentials|Set a Brave Search API key)$/.test(error.message))
-				? error.message : 'Request failed, timed out, or returned invalid JSON';
+				? error.message : describeRequestError(error);
 			warn(`${provider.name}: ${message}; trying the next provider.`);
 		}
 	}
