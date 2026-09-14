@@ -5,6 +5,8 @@ import { fetchTranscript } from "youtube-transcript-plus";
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
+import { setTimeout as delay } from "node:timers/promises";
+import { withRequestTimeout, fetchText } from "./requestTimeout";
 import { withDiagnostics } from "./diagnostics";
 import { configSchematics } from "./config";
 import { searchApiProviders, SearchResult } from "./searchProviders";
@@ -38,13 +40,14 @@ function extractContent(html: string, url: string): { title: string, content: st
 let gotScrapingInstance: typeof import('got-scraping').gotScraping | null = null;
 
 async function fetchPage(url: string, signal: AbortSignal): Promise<string> {
-	gotScrapingInstance ??= (await import('got-scraping')).gotScraping;
-	const response = await gotScrapingInstance({
-		url,
-		signal,
-		timeout: { request: 30000 },
+	return withRequestTimeout(signal, 30000, async requestSignal => {
+		gotScrapingInstance ??= (await import('got-scraping')).gotScraping;
+		requestSignal.throwIfAborted();
+		const response = await gotScrapingInstance({
+			url, signal: requestSignal, timeout: { request: 30000 }, retry: { limit: 0 },
+		});
+		return response.body as string;
 	});
-	return response.body as string;
 }
 
 export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[]> {
@@ -61,10 +64,10 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 
 	const makeRateLimiter = (interval: number) => {
 		let lastRequestTimestamp = 0;
-		return async () => {
+		return async (signal: AbortSignal) => {
 			const now = Date.now();
 			const waitMs = interval - (now - lastRequestTimestamp);
-			if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
+			if (waitMs > 0) await delay(waitMs, undefined, { signal });
 			lastRequestTimestamp = Date.now();
 		};
 	};
@@ -177,12 +180,15 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 					return { results: cached.results, count: cached.results.length, cached: true };
 				}
 
-				let results = await searchApiProviders(settings, query, pageSize, signal, status, warn);
+				const providerFailures: string[] = [];
+				let results = await searchApiProviders(settings, query, pageSize, signal, status, message => {
+					providerFailures.push(message); warn(message);
+				});
 				let lastError = '';
 				const maxRetries = 3;
 				for (let attempt = 1; results.length === 0 && attempt <= maxRetries; attempt++) {
 					signal.throwIfAborted();
-					await waitIfNeededSearch();
+					await waitIfNeededSearch(signal);
 					signal.throwIfAborted();
 					status(`Searching DuckDuckGo for: "${query}"...`);
 					if (attempt > 1) {
@@ -195,7 +201,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						diagnostic(lastError);
 					} catch (err: unknown) {
 						signal.throwIfAborted();
-						const msg = err instanceof Error ? err.message : 'unknown';
+						const msg = describeRequestError(err);
 						lastError = `DuckDuckGo error: ${msg}`;
 						diagnostic(describeRequestError(err));
 						break;
@@ -220,13 +226,12 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 					return { results, count: results.length, ...(reminder && { reminder }) };
 				}
 
-				return `No results found. ${lastError}. Try rephrasing your query.`;
+				return `No results found. ${[...providerFailures, lastError].filter(Boolean).join('; ')}. Try rephrasing your query or another source.`;
 			} catch (error: unknown) {
-				if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+				if (signal.aborted) {
 					return "Search was cancelled.";
 				}
-				const msg = error instanceof Error ? error.message : 'Unknown error';
-				console.error(error);
+				const msg = describeRequestError(error);
 				warn(`Search failed: ${msg}`);
 				return `Error: ${msg}`;
 			}
@@ -242,6 +247,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 		implementation: withDiagnostics("visit", diagnosticOptions, async ({ url }: { url: string }, { status, warn, signal, diagnostic }) => {
 			const originalUrl = url;
 			const failures: string[] = [];
+			let activeMethod = 'Visit Website';
 			const recordFailure = (message: string) => { failures.push(message); diagnostic(message); };
 
 			// De-AMP - AMP pages are always worse than the original
@@ -261,7 +267,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 
 			try {
 				signal.throwIfAborted();
-				let contentLimit = undefinedIfAuto(ctl.getPluginConfig(configSchematics).get("contentLimit"), -1) ?? 8000;
+				const contentLimit = undefinedIfAuto(ctl.getPluginConfig(configSchematics).get("contentLimit"), -1) ?? 8000;
 				const isPdf = /pdf/i.test(url);
 
 				// Handle YouTube URLs - fetch transcript instead
@@ -269,9 +275,10 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 				if (ytMatch) {
 					status(`Fetching YouTube transcript for: ${ytMatch[1]}`);
 					try {
-						const transcript = await fetchTranscript(url);
+						const transcript = await withRequestTimeout(signal, 30000, requestSignal => fetchTranscript(url, { signal: requestSignal }));
 						signal.throwIfAborted();
 						const text = transcript.map(t => t.text).join(' ').trim();
+						if (!text) throw new Error('No readable content');
 						const content = smartTruncate(text, contentLimit);
 						status(`Retrieved YouTube transcript (${content.length} chars)`);
 						visitCount++;
@@ -297,64 +304,52 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 					} catch (ytErr: unknown) {
 						signal.throwIfAborted();
 						const msg = describeRequestError(ytErr);
+						recordFailure(`YouTube: ${msg}`);
 						warn(`YouTube transcript unavailable: ${msg}`);
-						status('Falling back to Jina for YouTube page (content may be limited)');
+						status('Transcript unavailable; trying page extraction (content may be limited)');
 					}
 				}
 
 				// PDFs always use Jina
 				if (isPdf) {
-					status('Fetching PDF via Jina...');
-					await waitIfNeededJina();
+					activeMethod = 'Jina (PDF)';
+					status('Fetching PDF via Jina (30s timeout)...');
+					await waitIfNeededJina(signal);
 					signal.throwIfAborted();
 					const jinaUrl = `https://r.jina.ai/${url}`;
-					const jinaResponse = await fetch(jinaUrl, {
-						method: "GET",
-						signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-					});
-					if (jinaResponse.ok) {
-						const raw = await jinaResponse.text();
-						const content = smartTruncate(raw, contentLimit);
-						visitCount++;
-						const guidanceEnabled = ctl.getPluginConfig(configSchematics).get("promptGuidance") ?? true;
-						let reminder: string | undefined;
-						if (guidanceEnabled) {
-							if (visitCount === 1) {
-								reminder = "Visit one more from these results, then search again with a new query.";
-							} else if (visitCount === 2 && searchCount < 2) {
-								reminder = "Now search again with a new query. Do NOT answer yet.";
-							} else if (visitCount === 3) {
-								reminder = "Visit one more from these results.";
-							} else if (visitCount >= 4) {
-								reminder = "You may now synthesize your findings.";
-							}
+					const raw = await fetchText(jinaUrl, signal);
+					validateJina(raw);
+					const content = smartTruncate(raw, contentLimit);
+					visitCount++;
+					const guidanceEnabled = ctl.getPluginConfig(configSchematics).get("promptGuidance") ?? true;
+					let reminder: string | undefined;
+					if (guidanceEnabled) {
+						if (visitCount === 1) {
+							reminder = "Visit one more from these results, then search again with a new query.";
+						} else if (visitCount === 2 && searchCount < 2) {
+							reminder = "Now search again with a new query. Do NOT answer yet.";
+						} else if (visitCount === 3) {
+							reminder = "Visit one more from these results.";
+						} else if (visitCount >= 4) {
+							reminder = "You may now synthesize your findings.";
 						}
-						status(`Retrieved PDF (${content.length} chars)`);
-						return { url, title: 'PDF Document', content, ...(reminder && { reminder }) };
 					}
-					throw new Error(`HTTP ${jinaResponse.status}`);
+					status(`Retrieved PDF (${content.length} chars)`);
+					return { url, title: 'PDF Document', content, ...(reminder && { reminder }) };
 				}
 
 				// Helper: fetch via Jina
 				const tryJina = async (): Promise<{ title: string, content: string } | null> => {
 					try {
-						await waitIfNeededJina();
+						await waitIfNeededJina(signal);
 						signal.throwIfAborted();
 						const jinaUrl = `https://r.jina.ai/${url}`;
-						const jinaResponse = await fetch(jinaUrl, {
-							method: "GET",
-							signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-						});
-						if (!jinaResponse.ok) throw new Error(`HTTP ${jinaResponse.status}`);
-						const raw = await jinaResponse.text();
+						const raw = await fetchText(jinaUrl, signal);
+						validateJina(raw);
 						const titleMatch = raw.match(/^Title:\s*(.+)$/m);
 						const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
 						const content = smartTruncate(cleanMarkdown(raw), contentLimit);
-						const jinaWarning = raw.includes('This page maybe not yet fully loaded') || raw.includes('Unavailable For Legal Reasons');
-						if (jinaWarning || content.length < 2000) {
-							recordFailure('Jina: blocked, incomplete, or insufficient readable content');
-							return null;
-						}
+
 						return { title, content };
 					} catch (error) {
 						signal.throwIfAborted();
@@ -370,7 +365,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 						signal.throwIfAborted();
 						const { title, content: extracted } = extractContent(html, url);
 						const content = smartTruncate(extracted, contentLimit);
-						if (content.length < 2000) {
+						if (!extracted.trim()) {
 							recordFailure('Direct: insufficient readable content');
 							return null;
 						}
@@ -384,11 +379,11 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 
 				// Try direct fetch first, fallback to Jina
 				let result: { title: string, content: string } | null = null;
-				status('Trying direct fetch...');
+				status('Trying direct fetch (30s timeout, including response body)...');
 				result = await tryDirectFetch();
 				if (!result) {
 					signal.throwIfAborted();
-					status('Direct fetch failed, trying Jina...');
+					status('Direct fetch failed, trying Jina (30s timeout)...');
 					result = await tryJina();
 				}
 
@@ -396,22 +391,14 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 				if (!result && isMedium && originalUrl) {
 					status('Scribe.rip failed, trying original Medium URL via Jina...');
 					try {
-						await waitIfNeededJina();
+						await waitIfNeededJina(signal);
 						signal.throwIfAborted();
-						const fallbackResponse = await fetch(`https://r.jina.ai/${originalUrl}`, {
-							method: "GET",
-							signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-						});
-						if (!fallbackResponse.ok) throw new Error(`HTTP ${fallbackResponse.status}`);
-						if (fallbackResponse.ok) {
-							const raw = await fallbackResponse.text();
-							const titleMatch = raw.match(/^Title:\s*(.+)$/m);
-							const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
-							const content = smartTruncate(cleanMarkdown(raw), contentLimit);
-							if (content.length >= 500) {
-								result = { title, content };
-							}
-						}
+						const raw = await fetchText(`https://r.jina.ai/${originalUrl}`, signal);
+						validateJina(raw);
+						const titleMatch = raw.match(/^Title:\s*(.+)$/m);
+						const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
+						const content = smartTruncate(cleanMarkdown(raw), contentLimit);
+						result = { title, content };
 					} catch (error) {
 						signal.throwIfAborted();
 						recordFailure(`Jina (original URL): ${describeRequestError(error)}`);
@@ -442,10 +429,10 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 				status(`Retrieved "${title}" (${content.length} chars)`);
 				return { url, title, content, ...(reminder && { reminder }) };
 			} catch (error: unknown) {
-				if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+				if (signal.aborted) {
 					return "Website visit was cancelled.";
 				}
-				const msg = [...failures, describeRequestError(error)].join('; ');
+				const msg = [...failures, `${activeMethod}: ${describeRequestError(error)}`].join('; ');
 				warn(`Failed to load website: ${msg}`);
 				return websiteFailureResult(msg);
 			}
@@ -513,4 +500,11 @@ function smartTruncate(text: string, limit: number): string {
 	if (lastSentence > limit * 0.7) return truncated.slice(0, lastSentence + 1).trimEnd();
 
 	return truncated;
+}
+
+function validateJina(raw: string): void {
+	if (raw.includes('This page maybe not yet fully loaded') || raw.includes('Unavailable For Legal Reasons') || /^Warning:.*(?:[45]\d{2}|captcha|blocked)/im.test(raw)) {
+		throw new Error('Blocked or incomplete page content');
+	}
+	if (!cleanMarkdown(raw).trim()) throw new Error('No readable content');
 }

@@ -51,7 +51,7 @@ Example prompt:
 | **Enable Brave Search API** | Off | Use Brave if SearXNG is disabled, fails, or returns no usable results. |
 | **Brave Search API Key** | Empty | Brave subscription token, entered in a protected input field. |
 | **Search Results Per Page** | 5 | Maximum results per search (1–10). `0` uses a fixed default of 5. |
-| **Max Content** | 8000 | Maximum characters in returned content, including transcripts and PDFs. `-1` uses a fixed default of 8000. Low limits can cause page-reading failures; see Notes. |
+| **Max Content** | 8000 | Maximum characters in returned content, including transcripts and PDFs. `-1` uses a fixed default of 8000. The limit applies after readable-content validation. |
 | **Prompt Guidance** | On | Adds optional reminders based on search and visit counts. Try it with your model; improved answer quality is not guaranteed. |
 | **Debug Logging** | Off | Write operations, queries, URLs, statuses and errors to local JSONL files. |
 | **Debug Log Directory** | Empty | Absolute directory path. Empty uses `lmstudio-web-tools` under the plugin process's system temporary directory. |
@@ -81,7 +81,9 @@ These are suggestions to the model, not an enforced workflow. Try enabling or di
 
 - Website failures report the failed reading method and available DNS, connection, TLS, timeout, or HTTP details. A Jina failure does not prevent the original Medium URL fallback. Cancellation stops further fallback requests.
 
-- The main direct and Jina reading paths reject content shorter than 2000 characters after truncation. Short pages or Max Content below 2000 can therefore cause failures even when a page is accessible. A limit of 2000 can also fall below this threshold when truncation ends at a paragraph or sentence boundary. The original Medium URL fallback uses a 500-character threshold; PDFs and transcripts do not use these thresholds.
+- Short readable pages are accepted. Content validation precedes truncation, so a low Max Content no longer forces fallback. Empty extraction and recognized Jina blocking/incomplete-page warnings return failures, including on PDF and original Medium routes. This is not a guarantee of factual accuracy or complete page content.
+- Each direct/Jina/transcript load has a 30-second deadline, including asynchronous response-body reading; search APIs use 10 seconds. Direct requests explicitly disable transport retries. Each fallback has its own deadline, so a visit can exceed 30 seconds. Cancellation interrupts network waits and rate-limit delays. Synchronous HTML parsing is not preempted by these timers.
+- Final failures preserve the attempted reading methods and their known errors. Search failure results also retain earlier API-provider diagnostics.
 - YouTube extraction requires accessible captions. A supported URL does not guarantee that a transcript can be retrieved.
 - Direct fetch uses Readability (same engine as Firefox's reader mode) which strips navigation, sidebars, and other non-content elements. Link URLs are removed, keeping only the text.
 - Search results are cached per session in memory only — cache does not persist across LM Studio restarts
