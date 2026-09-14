@@ -12,6 +12,19 @@ updates:
       time: '10:00'
       timezone: Europe/Moscow
     open-pull-requests-limit: 5
+    ignore:
+      # Match the runtime in .node-version; revisit when its major changes.
+      - dependency-name: '@types/node'
+        versions: ['>=23.0.0']
+      # LM Studio SDK currently consumes Zod 3 schemas. Migrate SDK and schemas together.
+      - dependency-name: zod
+        versions: ['>=4.0.0']
+      # jsdom 30 requires a newer Node.js runtime than the supported LM Studio baseline.
+      - dependency-name: jsdom
+        versions: ['>=30.0.0']
+      # Review DOM types together with jsdom and the supported runtime.
+      - dependency-name: '@types/jsdom'
+        versions: ['>=29.0.0']
     groups:
       runtime-minor-patch:
         dependency-type: production
