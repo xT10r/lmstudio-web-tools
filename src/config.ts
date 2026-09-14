@@ -1,6 +1,18 @@
 import { createConfigSchematics } from "@lmstudio/sdk";
 
 export const configSchematics = createConfigSchematics()
+	.field("debugEnabled", "boolean", {
+		displayName: "Debug Logging",
+		subtitle: "Write timestamped operations, queries, URLs and errors to local JSONL files.",
+	}, false)
+	.field("debugDirectory", "string", {
+		displayName: "Debug Log Directory",
+		subtitle: "Absolute directory path. Empty uses lmstudio-web-tools inside the system temporary directory.",
+	}, "")
+	.field("debugIncludeResults", "boolean", {
+		displayName: "Debug: Include Results",
+		subtitle: "Also log returned page content and search results. May contain private information.",
+	}, false)
 	.field("searxngEnabled", "boolean", {
 		displayName: "Enable SearXNG",
 		subtitle: "Search SearXNG first; fall back to Brave (if enabled), then DuckDuckGo.",
