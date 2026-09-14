@@ -151,7 +151,7 @@ export async function toolsProvider(ctl: ToolsProviderController): Promise<Tool[
 
 	const webSearchTool = tool({
 		name: "Web Search",
-		description: `Search the web for sources relevant to the user's question. Read useful results with Visit Website. If a page is unavailable, search for the same information on a different domain; a failed source does not mean all sources are unavailable. For current facts, preserve the requested location and date in your query and verify timestamps in retrieved sources. Base claims on retrieved evidence, not on the number of tool calls.`,
+		description: `Search the web before answering when the user asks for an internet search, fact checking, links, or sources; when the answer needs current information such as latest versions, news, prices, or schedules; or when you are unsure of the facts needed to answer. Usually unnecessary for translation, editing supplied text, or general explanations that do not need external facts. Returns snippets and source URLs. Use Visit Website when you need to read a source to support the answer. Preserve the requested location and date in search queries. If a source is unavailable, search for another relevant domain. Base claims on retrieved evidence, not on the number of tool calls.`,
 		parameters: {
 			query: z.string().describe("The search query - be specific and varied across searches to get diverse results"),
 		},
